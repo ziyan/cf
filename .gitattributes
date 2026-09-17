@@ -1,0 +1,9 @@
+# Vendored dependencies are somebody else's code, checked in so the build needs
+# no network. Reviewing them is not the point of a pull request, and an update
+# that touches hundreds of files buries the one file the change is about.
+#
+# linguist-vendored keeps them out of the language statistics and collapses
+# them in a pull request. -diff is the same idea locally: git says the file
+# differs rather than printing it. Pass --text to see it anyway.
+vendor/** linguist-vendored
+vendor/** -diff

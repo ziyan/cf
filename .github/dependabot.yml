@@ -1,0 +1,24 @@
+# Dependency updates, proposed as pull requests. Weekly rather than daily: a
+# pull request every morning is one nobody reads.
+#
+# The Go dependencies are vendored, and Dependabot updates vendor/ along with
+# go.mod, which the build needs since it uses -mod=vendor.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      golang-x:
+        patterns: ['golang.org/x/*']
+
+  # The workflows pin every action to a commit, which is what stops a tag
+  # being repointed at somebody else's code. This keeps the pins current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

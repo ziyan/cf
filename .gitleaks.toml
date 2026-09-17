@@ -1,0 +1,15 @@
+# Configuration for gitleaks, which .github/workflows/secrets.yml runs over the
+# whole history. The upstream rules are the useful part; this is only what has
+# to be corrected for this repository.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored code"
+
+paths = [
+  # Vendored dependencies are somebody else's code to fix and ours to upgrade
+  # past, which is what govulncheck watches for.
+  '''^vendor/''',
+]
