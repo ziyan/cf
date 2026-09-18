@@ -122,3 +122,7 @@ a password and can be revoked on its own. The token is read without echoing, or
 from `CF_TOKEN` when there is no terminal to ask, and the credentials are
 checked against the site before they are written to `~/.config/cf/config.json`
 with owner-only permissions.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
