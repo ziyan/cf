@@ -4,7 +4,7 @@ All notable changes to cf will be documented in this file.
 
 The format is based loosely on Keep a Changelog.
 
-## [Unreleased]
+## [0.1.0] - 2026-09-17
 
 ### Added
 
