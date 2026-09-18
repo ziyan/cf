@@ -384,14 +384,20 @@ func archiveCommentsForPages(ctx context.Context, apiClient *client.Client, stor
 		go func() {
 			defer waitGroup.Done()
 			for pageId := range work {
-				comments, err := confluence.CommentsOn(ctx, apiClient, pageId)
+				contentType := "pages"
+				if _, isBlogpost := state.Blogposts[pageId]; isBlogpost {
+					contentType = "blogposts"
+				}
+				comments, err := confluence.CommentsOn(ctx, apiClient, pageId, contentType)
 				outcomes <- &fetched{pageId: pageId, comments: comments, err: err}
 			}
 		}()
 	}
 	go func() {
 		for _, pageId := range pageIds {
-			if _, isKnown := state.Pages[pageId]; isKnown {
+			_, isPage := state.Pages[pageId]
+			_, isBlogpost := state.Blogposts[pageId]
+			if isPage || isBlogpost {
 				work <- pageId
 			}
 		}
@@ -406,7 +412,10 @@ func archiveCommentsForPages(ctx context.Context, apiClient *client.Client, stor
 			return written, newest, outcome.err
 		}
 		pageId, comments := outcome.pageId, outcome.comments
-		pageState := state.Pages[pageId]
+		pageState, isKnown := state.Pages[pageId]
+		if !isKnown {
+			pageState = state.Blogposts[pageId]
+		}
 		if len(comments) == 0 {
 			continue
 		}
@@ -555,7 +564,7 @@ func archiveSyncAllComments(ctx context.Context, apiClient *client.Client, store
 			if modified := comment.ModifiedAt(); modified > newest {
 				newest = modified
 			}
-			byPage[comment.PageID] = append(byPage[comment.PageID], comment)
+			byPage[comment.ParentID()] = append(byPage[comment.ParentID()], comment)
 		}
 		if seen%10000 == 0 {
 			printer.PrintInfo("  %d comments seen", seen)
@@ -568,7 +577,12 @@ func archiveSyncAllComments(ctx context.Context, apiClient *client.Client, store
 
 	written, missing := 0, 0
 	for pageId, comments := range byPage {
+		// A comment belongs to a page or to a blog post, and both are
+		// archived, so both are looked in.
 		pageState, isKnown := state.Pages[pageId]
+		if !isKnown {
+			pageState, isKnown = state.Blogposts[pageId]
+		}
 		if !isKnown {
 			missing++
 			continue

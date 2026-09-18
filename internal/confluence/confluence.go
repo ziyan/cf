@@ -112,13 +112,24 @@ type Label struct {
 type Comment struct {
 	Kind CommentKind `json:"-"`
 
-	ID               string   `json:"id"`
-	PageID           string   `json:"pageId"`
+	ID     string `json:"id"`
+	PageID string `json:"pageId"`
+	// BlogPostID is set instead of PageID when the comment is on a blog post.
+	// A reader that looks only at PageID drops those on the floor.
+	BlogPostID       string   `json:"blogPostId"`
 	Title            string   `json:"title"`
 	Status           string   `json:"status"`
 	ResolutionStatus string   `json:"resolutionStatus"`
 	Version          *Version `json:"version"`
 	Body             *Body    `json:"body"`
+}
+
+// ParentID is the page or blog post this comment belongs to.
+func (self *Comment) ParentID() string {
+	if self.PageID != "" {
+		return self.PageID
+	}
+	return self.BlogPostID
 }
 
 // ModifiedAt is when this revision of the comment was made.
@@ -251,18 +262,18 @@ func AllComments(ctx context.Context, apiClient *client.Client, visit func(comme
 	return nil
 }
 
-// CommentsOn reads every comment on one page, of both kinds.
-func CommentsOn(ctx context.Context, apiClient *client.Client, pageId string) ([]*Comment, error) {
+// CommentsOn reads every comment on one page or blog post, of both kinds.
+func CommentsOn(ctx context.Context, apiClient *client.Client, contentId, contentType string) ([]*Comment, error) {
 	var comments []*Comment
 	for _, kind := range []CommentKind{FooterComment, InlineComment} {
-		path := client.Query(fmt.Sprintf("/wiki/api/v2/pages/%s/%s-comments", pageId, kind), map[string]string{
+		path := client.Query(fmt.Sprintf("/wiki/api/v2/%s/%s/%s-comments", contentType, contentId, kind), map[string]string{
 			"limit":       fmt.Sprint(PageSize),
 			"body-format": "storage",
 		})
 		err := Walk(ctx, apiClient, path, func(results json.RawMessage) (bool, error) {
 			var batch []*Comment
 			if err := json.Unmarshal(results, &batch); err != nil {
-				return false, fmt.Errorf("confluence: parsing %s comments on %s: %w", kind, pageId, err)
+				return false, fmt.Errorf("confluence: parsing %s comments on %s: %w", kind, contentId, err)
 			}
 			for _, comment := range batch {
 				comment.Kind = kind
