@@ -488,3 +488,22 @@ func cqlTime(moment string) (string, error) {
 	}
 	return parsed.Add(-cqlSafetyMargin).Format("2006-01-02 15:04"), nil
 }
+
+// AllAttachments walks every attachment on the site.
+//
+// One walk of 250 at a time, rather than asking each page what it holds: a
+// site of a hundred thousand pages is a hundred thousand requests that way and
+// a few thousand this way.
+func AllAttachments(ctx context.Context, apiClient *client.Client, visit func(attachments []*Attachment) (bool, error)) error {
+	path := client.Query("/wiki/api/v2/attachments", map[string]string{
+		"limit":  fmt.Sprint(PageSize),
+		"status": "current",
+	})
+	return Walk(ctx, apiClient, path, func(results json.RawMessage) (bool, error) {
+		var batch []*Attachment
+		if err := json.Unmarshal(results, &batch); err != nil {
+			return false, fmt.Errorf("confluence: parsing attachments: %w", err)
+		}
+		return visit(batch)
+	})
+}

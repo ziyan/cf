@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,5 +160,63 @@ func TestAppendAttachmentsRecordsWithoutFetching(t *testing.T) {
 	// are not downloaded.
 	if _, err := os.Stat(store.AttachmentsDirectory()); !os.IsNotExist(err) {
 		t.Errorf("recording attachments must not create the download directory")
+	}
+}
+
+// A site can hold attachments by the million, and a million files in one
+// directory is slow to list and hard on some file systems.
+func TestAttachmentPathsAreSpreadOverShards(t *testing.T) {
+	store, err := Create(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shards := map[string]int{}
+	for index := 0; index < 2000; index++ {
+		path := store.AttachmentPath(fmt.Sprintf("att%d", index), "file.pdf")
+		shards[filepath.Base(filepath.Dir(path))]++
+	}
+	// Confluence ids share a prefix, so the shard has to come from a hash of
+	// the id rather than from the id itself, or they all land together.
+	if len(shards) < 200 {
+		t.Errorf("2000 attachments landed in only %d shards", len(shards))
+	}
+	largest := 0
+	for _, count := range shards {
+		if count > largest {
+			largest = count
+		}
+	}
+	if largest > 40 {
+		t.Errorf("one shard took %d of 2000, which is not a spread", largest)
+	}
+	// The same attachment always belongs in the same place, or a second run
+	// would fetch everything again.
+	first := store.AttachmentPath("att123", "file.pdf")
+	if second := store.AttachmentPath("att123", "file.pdf"); first != second {
+		t.Errorf("the path moved between calls: %q then %q", first, second)
+	}
+}
+
+func TestHaveAttachmentsReadsEveryShard(t *testing.T) {
+	store, err := Create(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"att1", "att2", "att3"} {
+		if err := store.WriteAttachment(id, "file.pdf", []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	have, err := store.HaveAttachments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"att1", "att2", "att3"} {
+		if _, isHere := have[id]; !isHere {
+			t.Errorf("%s was written but not found again", id)
+		}
+	}
+	if len(have) != 3 {
+		t.Errorf("expected 3 attachments, found %d", len(have))
 	}
 }

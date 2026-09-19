@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ziyan/cf/internal/client"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -34,6 +34,7 @@ func newAttachmentsCommand() *cobra.Command {
 		RunE:  attachmentsIndexRun,
 	}
 	indexCommand.Flags().StringP("space", "s", "", "Only spaces whose key contains this substring")
+	indexCommand.Flags().Bool("all", false, "Walk the whole site at once, rather than asking each archived page")
 
 	downloadCommand := &cobra.Command{
 		Use:   "download <directory>",
@@ -64,6 +65,10 @@ func attachmentsIndexRun(command *cobra.Command, arguments []string) error {
 		return err
 	}
 	spaceSubstring, _ := command.Flags().GetString("space")
+	indexEverything, _ := command.Flags().GetBool("all")
+	if indexEverything {
+		return attachmentsIndexAll(command.Context(), apiClient, store)
+	}
 
 	state, err := store.LoadState()
 	if err != nil {
@@ -110,6 +115,58 @@ func attachmentsIndexRun(command *cobra.Command, arguments []string) error {
 		if done%500 == 0 {
 			printer.PrintInfo("  %d/%d pages, %d attachments recorded", done, len(pageIds), recorded)
 		}
+	}
+	printer.PrintSuccess("%d attachments recorded in %s", recorded, store.AttachmentsPath())
+	return nil
+}
+
+// attachmentsIndexAll walks the whole site's attachments in one pass. Asking
+// each page what it holds is one request per page, which for a large site is
+// a hundred thousand requests against a few thousand for this.
+func attachmentsIndexAll(ctx context.Context, apiClient *client.Client, store *archive.Store) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	state, err := store.LoadState()
+	if err != nil {
+		return err
+	}
+	// The space a page belongs to is already known, so the index can say
+	// which space an attachment is in without asking again.
+	spaceOf := make(map[string]string, len(state.Pages)+len(state.Blogposts))
+	for pageId, page := range state.Pages {
+		spaceOf[pageId] = page.SpaceKey
+	}
+	for pageId, page := range state.Blogposts {
+		spaceOf[pageId] = page.SpaceKey
+	}
+
+	seen, recorded := 0, 0
+	err = confluence.AllAttachments(ctx, apiClient, func(attachments []*confluence.Attachment) (bool, error) {
+		records := make([]*archive.Attachment, 0, len(attachments))
+		for _, attachment := range attachments {
+			seen++
+			records = append(records, &archive.Attachment{
+				ID:          attachment.ID,
+				PageID:      attachment.PageID,
+				SpaceKey:    spaceOf[attachment.PageID],
+				Title:       attachment.Title,
+				MediaType:   attachment.MediaType,
+				FileSize:    attachment.FileSize,
+				DownloadURL: attachment.DownloadURL,
+			})
+		}
+		if err := store.AppendAttachments(records); err != nil {
+			return false, err
+		}
+		recorded += len(records)
+		if seen%50000 == 0 {
+			printer.PrintInfo("  %d attachments recorded", seen)
+		}
+		return true, nil
+	})
+	if err != nil {
+		return err
 	}
 	printer.PrintSuccess("%d attachments recorded in %s", recorded, store.AttachmentsPath())
 	return nil
@@ -162,20 +219,9 @@ func attachmentsDownloadRun(command *cobra.Command, arguments []string) error {
 		printer.PrintInfo("stopping after %d", limit)
 	}
 
-	directory := store.AttachmentsDirectory()
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return fmt.Errorf("commands: creating %s: %w", directory, err)
-	}
-	// One listing rather than a stat per file: the directory grows as we go.
-	have := map[string]struct{}{}
-	entries, err := os.ReadDir(directory)
+	have, err := store.HaveAttachments()
 	if err != nil {
-		return fmt.Errorf("commands: reading %s: %w", directory, err)
-	}
-	for _, entry := range entries {
-		if index := strings.Index(entry.Name(), "__"); index > 0 {
-			have[entry.Name()[:index]] = struct{}{}
-		}
+		return err
 	}
 
 	ctx := context.Background()
@@ -191,9 +237,8 @@ func attachmentsDownloadRun(command *cobra.Command, arguments []string) error {
 			unavailable++
 			continue
 		}
-		name := archive.SafeName(record.ID) + "__" + archive.SafeName(record.Title)
-		if err := os.WriteFile(filepath.Join(directory, name), content, 0o644); err != nil {
-			return fmt.Errorf("commands: writing %s: %w", name, err)
+		if err := store.WriteAttachment(record.ID, record.Title, content); err != nil {
+			return err
 		}
 		saved++
 		savedBytes += int64(len(content))

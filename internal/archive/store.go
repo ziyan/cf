@@ -15,6 +15,8 @@
 package archive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -202,6 +204,62 @@ func (self *Store) CommentsDirectory() string { return filepath.Join(self.direct
 // AttachmentsDirectory holds the attachment files somebody asked for.
 func (self *Store) AttachmentsDirectory() string {
 	return filepath.Join(self.directory, attachmentsDirName)
+}
+
+// AttachmentPath is where one attachment's file belongs.
+//
+// The files are spread over 256 directories by a hash of the id. A site can
+// hold attachments by the million, and a million files in one directory is
+// slow to list, slow for a shell to complete, and hard on some file systems.
+// The hash rather than the id itself, because Confluence ids share a prefix
+// and would all land in the same place.
+func (self *Store) AttachmentPath(attachmentId, title string) string {
+	return filepath.Join(self.AttachmentsDirectory(), attachmentShard(attachmentId),
+		SafeName(attachmentId)+"__"+SafeName(title))
+}
+
+// attachmentShard is the directory one attachment belongs in.
+func attachmentShard(attachmentId string) string {
+	sum := sha256.Sum256([]byte(attachmentId))
+	return hex.EncodeToString(sum[:1])
+}
+
+// HaveAttachments reads which attachments are already on disk, in one walk
+// rather than a stat per file.
+func (self *Store) HaveAttachments() (map[string]struct{}, error) {
+	have := map[string]struct{}{}
+	root := self.AttachmentsDirectory()
+	shards, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return have, nil
+		}
+		return nil, fmt.Errorf("archive: reading %s: %w", root, err)
+	}
+	for _, shard := range shards {
+		if !shard.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(root, shard.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("archive: reading %s: %w", shard.Name(), err)
+		}
+		for _, file := range files {
+			if index := strings.Index(file.Name(), "__"); index > 0 {
+				have[file.Name()[:index]] = struct{}{}
+			}
+		}
+	}
+	return have, nil
+}
+
+// WriteAttachment writes one attachment's bytes into its shard.
+func (self *Store) WriteAttachment(attachmentId, title string, content []byte) error {
+	path := self.AttachmentPath(attachmentId, title)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("archive: creating %s: %w", filepath.Dir(path), err)
+	}
+	return writeFileAtomic(path, content)
 }
 
 // SafeName turns a title into something safe to use as a path element. A name
